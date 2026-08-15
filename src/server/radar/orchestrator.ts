@@ -4,7 +4,12 @@ import { evidencePackSchema, narrativeCritiqueSchema, radarReportSchema } from "
 import { getRadarDateRange } from "@/lib/radar/time-window";
 import { sampleRadarReport } from "@/lib/radar/sample-report";
 import { RadarAgentError, RadarConfigError } from "./errors";
-import { buildCriticPrompt, buildResearchPrompt, buildSynthesizerPrompt } from "./prompts";
+import {
+  buildCriticPrompt,
+  buildResearchPrompt,
+  buildSingleAgentReportPrompt,
+  buildSynthesizerPrompt,
+} from "./prompts";
 import { normalizeSharePercentages } from "./tools/report-tools";
 import { searchXNarratives } from "./tools/x-search";
 
@@ -26,11 +31,75 @@ export async function generateRadarReport(
   }
 
   const dateRange = getRadarDateRange(request.window);
+  console.log(`[radar] apify search start topic="${request.topic}"`);
   const searchResult = await searchXNarratives(request.topic, dateRange, {
     maxResults: 50,
   });
+  console.log(
+    `[radar] apify search done topic="${request.topic}" raw=${searchResult.rawItemCount} normalized=${searchResult.posts.length}`,
+  );
+
+  if (process.env.RADAR_USE_STAGED_AGENTS === "true") {
+    return runStagedReportAgents(request, dateRange, searchResult, cursorApiKey);
+  }
+
+  console.log(`[radar] single report agent start topic="${request.topic}"`);
+  const report = await runSingleReportAgent(request, dateRange, searchResult, cursorApiKey);
+  console.log(
+    `[radar] single report agent done topic="${request.topic}" narratives=${report.narratives.length}`,
+  );
+  return report;
+}
+
+async function runSingleReportAgent(
+  request: RadarRequest,
+  dateRange: ReturnType<typeof getRadarDateRange>,
+  searchResult: Awaited<ReturnType<typeof searchXNarratives>>,
+  cursorApiKey: string,
+): Promise<RadarReport> {
+  const parsed = await runCloudAgentForJson(
+    buildSingleAgentReportPrompt(request, dateRange, searchResult),
+    "single-report",
+    cursorApiKey,
+  );
+  const report = radarReportSchema.parse(
+    repairRadarReportCandidate(parsed, request, {
+      topic: request.topic,
+      window: request.window,
+      searchedRange: dateRange,
+      posts: searchResult.posts,
+      candidateNarratives: [
+        {
+          id: "raw-evidence",
+          label: "Raw evidence",
+          thesis: "Raw Apify evidence used for report generation.",
+          evidence: searchResult.posts,
+        },
+      ],
+      notableAmplifiers: [],
+      evidenceThin: searchResult.posts.length === 0,
+    }),
+  );
+  return normalizeReportShares(report);
+}
+
+async function runStagedReportAgents(
+  request: RadarRequest,
+  dateRange: ReturnType<typeof getRadarDateRange>,
+  searchResult: Awaited<ReturnType<typeof searchXNarratives>>,
+  cursorApiKey: string,
+): Promise<RadarReport> {
+  console.log(`[radar] research agent start topic="${request.topic}"`);
   const evidencePack = await runResearchAgent(request, dateRange, searchResult, cursorApiKey);
+  console.log(
+    `[radar] research agent done topic="${request.topic}" candidates=${evidencePack.candidateNarratives.length} posts=${evidencePack.posts.length}`,
+  );
+  console.log(`[radar] critic agent start topic="${request.topic}"`);
   const critique = await runCriticAgent(evidencePack, cursorApiKey);
+  console.log(
+    `[radar] critic agent done topic="${request.topic}" decisions=${critique.decisions.length}`,
+  );
+  console.log(`[radar] synthesizer agent start topic="${request.topic}"`);
   return runSynthesizerAgent(request, evidencePack, critique, cursorApiKey);
 }
 
@@ -91,7 +160,11 @@ async function runSynthesizerAgent(
     const report = radarReportSchema.parse(
       repairRadarReportCandidate(parsed, request, evidencePack),
     );
-    return normalizeReportShares(report);
+    const normalizedReport = normalizeReportShares(report);
+    console.log(
+      `[radar] synthesizer agent done topic="${request.topic}" narratives=${normalizedReport.narratives.length}`,
+    );
+    return normalizedReport;
   } catch (error) {
     if (error instanceof CursorAgentError) {
       throw new RadarAgentError(error.message);
@@ -116,7 +189,15 @@ async function runCloudAgentForJson(
     throw new RadarAgentError(`Cursor ${stage} agent ended with status: ${result.status}`);
   }
 
-  return parseJsonObject(String(result.result ?? ""));
+  const agentText = String(result.result ?? "");
+  try {
+    return parseJsonObject(agentText);
+  } catch (error) {
+    console.error(
+      `[radar] ${stage} json parse failed len=${agentText.length} preview=${JSON.stringify(agentText.slice(0, 240))}`,
+    );
+    throw error;
+  }
 }
 
 function repairRadarReportCandidate(
@@ -311,25 +392,76 @@ function normalizeReportShares(report: RadarReport): RadarReport {
 }
 
 function parseJsonObject(text: string): unknown {
-  const trimmed = text.trim();
+  const trimmed = stripCodeFence(text.trim());
   if (!trimmed) {
     throw new RadarAgentError("Cursor agent returned an empty report.");
   }
 
   try {
-    return JSON.parse(stripCodeFence(trimmed));
+    return JSON.parse(trimmed);
   } catch {
-    const firstBrace = trimmed.indexOf("{");
-    const lastBrace = trimmed.lastIndexOf("}");
-
-    if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+    const jsonSlice = extractFirstJsonObject(trimmed);
+    if (!jsonSlice) {
       throw new RadarAgentError("Cursor agent did not return JSON.");
     }
 
-    return JSON.parse(trimmed.slice(firstBrace, lastBrace + 1));
+    try {
+      return JSON.parse(jsonSlice);
+    } catch {
+      throw new RadarAgentError("Cursor agent returned extra text after JSON.");
+    }
   }
 }
 
+function extractFirstJsonObject(text: string): string | null {
+  const start = text.indexOf("{");
+  if (start === -1) {
+    return null;
+  }
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return text.slice(start, index + 1);
+      }
+    }
+  }
+
+  return null;
+}
+
 function stripCodeFence(text: string): string {
-  return text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  return text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```[\s\S]*$/, "");
 }

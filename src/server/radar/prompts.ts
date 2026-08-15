@@ -63,6 +63,81 @@ JSON shape:
 }`;
 }
 
+export function buildSingleAgentReportPrompt(
+  request: RadarRequest,
+  dateRange: RadarDateRange,
+  searchResult: Awaited<ReturnType<typeof searchXNarratives>>,
+): string {
+  return `You are Narrative Radar.
+
+Goal:
+Use the Apify X posts below to produce a product-ready RadarReport. This is not sentiment analysis and not a generic news summary. Find competing stories people are telling.
+
+Topic: ${request.topic}
+Window: ${request.window}
+Date range: ${dateRange.fromDate} through ${dateRange.toDate}
+
+Apify search result:
+${JSON.stringify(searchResult, null, 2)}
+
+Rules:
+1. Return 1-5 narratives.
+2. Narratives are thesis-level stories, not Positive / Negative / Neutral buckets.
+3. If disagreement is thin, return 1 narrative and explain that in diagnostics.
+4. Use actual post URLs and quotes from the Apify evidence when possible.
+5. Make sharePct values roughly sum to 100.
+6. Do not optimize for a specific UI layout. Return complete product data; the frontend will truncate visually.
+7. Return exactly one JSON object and stop. No markdown, no code fences, no commentary, no second object.
+
+JSON shape:
+{
+  "reportVersion": "1",
+  "topic": string,
+  "window": "6h" | "24h" | "7d",
+  "generatedAt": string,
+  "source": {
+    "provider": "apify",
+    "query": string,
+    "sampledCount": number
+  },
+  "pulse": string,
+  "narratives": [
+    {
+      "id": string,
+      "label": string,
+      "thesis": string,
+      "sharePct": number,
+      "trajectory": "rising" | "stable" | "fading",
+      "confidence": "low" | "medium" | "high",
+      "amplifiers": [{ "handle": string, "why": string }],
+      "receipts": [
+        {
+          "url": string,
+          "quote": string,
+          "handle": string,
+          "metrics": {
+            "replies": number,
+            "reposts": number,
+            "likes": number,
+            "views": number
+          }
+        }
+      ]
+    }
+  ],
+  "collision": {
+    "summary": string,
+    "faultLine": string,
+    "narrativeIds": string[]
+  },
+  "watchFor": [{ "label": string, "why": string }],
+  "diagnostics": {
+    "evidenceThin": boolean,
+    "warnings": string[]
+  }
+}`;
+}
+
 export function buildCriticPrompt(evidencePack: EvidencePack): string {
   return `You are the Narrative Radar critic agent.
 

@@ -24,7 +24,7 @@ export function PulseBanner({ report }: { report: RadarReport }) {
       <p className="mt-3 text-[13px] text-[#8b93a0]">
         {report.narratives.length} competing narrative{report.narratives.length === 1 ? "" : "s"}
         {` · last ${report.window}`}
-        {report.evidenceThin ? " · not enough disagreement to cluster" : ""}
+        {report.diagnostics?.evidenceThin ? " · not enough disagreement to cluster" : ""}
       </p>
     </section>
   );

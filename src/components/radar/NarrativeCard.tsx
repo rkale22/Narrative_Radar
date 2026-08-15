@@ -142,10 +142,10 @@ function ExpandedNarrative({
         <div>
           <div className="text-[11px] font-semibold tracking-[0.18em] text-[#8b93a0]">RECEIPTS</div>
           <div className="mt-3 flex flex-col gap-3">
-            {narrative.receipts.map((receipt) => (
+            {narrative.receipts.map((receipt, index) => (
               <a
-                key={receipt.url}
-                href={receipt.url}
+                key={receipt.url ?? `${receipt.handle ?? "receipt"}-${index}`}
+                href={receipt.url ?? "#"}
                 target="_blank"
                 rel="noreferrer"
                 onClick={stopLinkClick}
@@ -154,7 +154,7 @@ function ExpandedNarrative({
                 <div className="flex items-center gap-2">
                   <span
                     className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold text-white"
-                    style={{ background: handleColor(receipt.handle ?? receipt.url) }}
+                    style={{ background: handleColor(receipt.handle ?? receipt.url ?? receipt.quote) }}
                   >
                     {initials(receipt.handle ?? "x")}
                   </span>

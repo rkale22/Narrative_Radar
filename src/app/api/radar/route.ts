@@ -8,10 +8,18 @@ export const runtime = "nodejs";
 export const maxDuration = 120;
 
 export async function POST(request: NextRequest) {
+  const startedAt = Date.now();
+
   try {
     const body = await request.json();
     const radarRequest = radarRequestSchema.parse(body);
+    console.log(
+      `[radar] request start topic="${radarRequest.topic}" window=${radarRequest.window} sample=${Boolean(radarRequest.useSample)}`,
+    );
     const report = await generateRadarReport(radarRequest);
+    console.log(
+      `[radar] request success topic="${radarRequest.topic}" narratives=${report.narratives.length} durationMs=${Date.now() - startedAt}`,
+    );
 
     return NextResponse.json<RadarResponse>({ ok: true, report });
   } catch (error) {
@@ -30,6 +38,9 @@ export async function POST(request: NextRequest) {
 
     const response = toRadarErrorResponse(error);
     const status = response.error.code === "config_error" ? 500 : 502;
+    console.error(
+      `[radar] request failed code=${response.error.code} durationMs=${Date.now() - startedAt}: ${response.error.message}`,
+    );
 
     return NextResponse.json<RadarResponse>(response, { status });
   }

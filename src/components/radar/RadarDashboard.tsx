@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { FooterInsights } from "@/components/radar/FooterInsights";
 import { Header } from "@/components/radar/Header";
 import { NarrativeGrid } from "@/components/radar/NarrativeCard";
@@ -14,11 +14,13 @@ export function RadarDashboard() {
   const [report, setReport] = useState<RadarReport>(sampleRadarReport);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const inFlightRef = useRef(false);
 
   async function handleSubmit() {
     const nextTopic = topic.trim();
-    if (nextTopic.length < 2 || loading) return;
+    if (nextTopic.length < 2 || inFlightRef.current) return;
 
+    inFlightRef.current = true;
     setLoading(true);
     setError(null);
 
@@ -45,6 +47,7 @@ export function RadarDashboard() {
     } catch {
       setError("Could not reach Narrative Radar.");
     } finally {
+      inFlightRef.current = false;
       setLoading(false);
     }
   }
