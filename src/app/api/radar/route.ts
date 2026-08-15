@@ -1,0 +1,36 @@
+import { NextRequest, NextResponse } from "next/server";
+import { ZodError } from "zod";
+import { radarRequestSchema, type RadarResponse } from "@/lib/radar/schema";
+import { generateRadarReport } from "@/server/radar/orchestrator";
+import { toRadarErrorResponse } from "@/server/radar/errors";
+
+export const runtime = "nodejs";
+export const maxDuration = 120;
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const radarRequest = radarRequestSchema.parse(body);
+    const report = await generateRadarReport(radarRequest);
+
+    return NextResponse.json<RadarResponse>({ ok: true, report });
+  } catch (error) {
+    if (error instanceof ZodError) {
+      return NextResponse.json<RadarResponse>(
+        {
+          ok: false,
+          error: {
+            code: "bad_request",
+            message: error.issues.map((issue) => issue.message).join("; "),
+          },
+        },
+        { status: 400 },
+      );
+    }
+
+    const response = toRadarErrorResponse(error);
+    const status = response.error.code === "config_error" ? 500 : 502;
+
+    return NextResponse.json<RadarResponse>(response, { status });
+  }
+}
