@@ -16,9 +16,11 @@
 # next.js
 /.next/
 /out/
+.cursor-sdk/
 
 # production
 /build
+/artifacts/
 
 # misc
 .DS_Store
