@@ -1,0 +1,4 @@
+# Keep only the demo linked from the README.
+*
+!Narrative-Radar-Demo.mp4
+!.gitignore
